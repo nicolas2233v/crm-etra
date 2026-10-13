@@ -33,16 +33,46 @@ export default function Admin(){
  const userName=(id:string|null)=>users.find(u=>u.id===id)?.full_name||'Sin asignar';
  const zoneName=(id:string|null)=>zones.find(z=>z.id===id)?.name||'Sin zona';
  const clientName=(id:string|null)=>clients.find(c=>c.id===id)?.business_name||'Sin cliente';
- async function downloadExcel(){setBusy(true);try{const XLSX=await import('xlsx');const workbook=XLSX.utils.book_new();const sheets:{name:string;rows:Row[]}[]=[
- {name:'Clientes',rows:clients.map(c=>({...c,zona:zoneName(c.zone_id)}))},
- {name:'Zonas',rows:zones.map(z=>({zona:z.name,vendedor:userName(z.seller_id)}))},
- {name:'Usuarios',rows:users.map(u=>({nombre:u.full_name,rol:u.role,id:u.id}))},
- {name:'Tareas',rows:tasks.map(t=>({...t,vendedor:userName(t.assigned_to),cliente:clientName(t.client_id)}))},
- {name:'Gestiones',rows:activities.map(a=>({...a,cliente:clientName(String(a.client_id)),vendedor:userName(String(a.seller_id))}))},
- {name:'Contactos',rows:clicks.map(c=>({...c,cliente:clientName(String(c.client_id)),vendedor:userName(String(c.seller_id))}))},
- {name:'Solicitudes',rows:requests.map(r=>({...r,cliente:clientName(r.client_id),solicitante:userName(r.requested_by)}))},
- {name:'Cobros y compromisos',rows:payments.map(p=>({...p,cliente:clientName(String(p.client_id)),vendedor:userName(String(p.seller_id))}))}
- ];sheets.forEach(s=>{const sheet=XLSX.utils.json_to_sheet(s.rows.length?s.rows:[{estado:'Sin datos'}]);XLSX.utils.book_append_sheet(workbook,sheet,s.name)});XLSX.writeFile(workbook,'ETRA-CRM-'+new Date().toISOString().slice(0,10)+'.xlsx');setMsg('Excel generado');}catch(e){setMsg('Error exportando: '+String(e))}finally{setBusy(false)}}
+ async function downloadExcel(){
+ if(!supabase)return;setBusy(true);setMsg('Preparando exportación completa...');
+ try{
+  const XLSX=await import('xlsx');
+  const db=supabase;
+  async function all(table:string){
+   const records:Row[]=[];
+   for(let from=0;from<1000000;from+=1000){
+    const {data,error}=await db.from(table).select('*').range(from,from+999);
+    if(error)throw new Error(table+': '+error.message);
+    const batch=(data||[]) as Row[];
+    records.push(...batch);
+    if(batch.length<1000)break;
+   }
+   return records;
+  }
+  const tables:[string,string][]=[
+   ['Clientes','clients'],['Zonas','zones'],['Usuarios','profiles'],
+   ['Tareas','tasks'],['Gestiones','activities'],['Clics','contact_clicks'],
+   ['Solicitudes','client_change_requests'],['Cobros','payment_records'],
+   ['Rutas semanales','route_templates'],['Excepciones','route_overrides'],
+   ['Auditoria','audit_log']];
+  const workbook=XLSX.utils.book_new();
+  for(const [title,table] of tables){
+   const records=await all(table);
+   const enriched=records.map(row=>{
+    const copy:Row={...row};
+    if(row.client_id)copy.cliente=clientName(String(row.client_id));
+    if(row.zone_id)copy.zona=zoneName(String(row.zone_id));
+    if(row.seller_id)copy.vendedor=userName(String(row.seller_id));
+    if(row.assigned_to)copy.asignado_a=userName(String(row.assigned_to));
+    return copy;
+   });
+   XLSX.utils.book_append_sheet(workbook,XLSX.utils.json_to_sheet(enriched.length?enriched:[{estado:'Sin datos'}]),title);
+   setMsg('Preparando '+title+' ('+records.length+' registros)...');
+  }
+  XLSX.writeFile(workbook,'ETRA-CRM-COMPLETO-'+new Date().toISOString().slice(0,10)+'.xlsx');
+  setMsg('Exportación completa generada correctamente');
+ }catch(e){setMsg('No se pudo exportar: '+(e instanceof Error?e.message:String(e)));}finally{setBusy(false);}
+}
  async function saveZone(z:Zone,seller:string){if(!supabase)return;setBusy(true);const {error}=await supabase.from('zones').update({seller_id:seller||null}).eq('id',z.id);setMsg(error?.message||'Zona actualizada');setBusy(false);await reload();}
  async function assignTask(e:React.FormEvent){e.preventDefault();if(!supabase)return;setBusy(true);const {data:{user}}=await supabase.auth.getUser();const {error}=await supabase.from('tasks').insert({subject,description:detail||subject,due_date:due,priority,assigned_to:assignee,created_by:user!.id,origin:'admin',client_id:clientRef||null});setMsg(error?.message||'Tarea creada');setBusy(false);if(!error){setSubject('');setDetail('');setDue('');await reload();}}
  async function addClient(e:React.FormEvent){e.preventDefault();if(!supabase)return;setBusy(true);const {error}=await supabase.from('clients').upsert({client_code:code,business_name:business,phone,address,locality,business_type:businessType,zone_id:zone||null},{onConflict:'client_code'});setMsg(error?.message||'Cliente guardado');setBusy(false);if(!error){setCode('');setBusiness('');await reload();}}
