@@ -1,6 +1,6 @@
 'use client';
 import {useEffect,useState} from 'react';
-import {supabase} from '../lib/supabase';
+import {supabase} from '../../lib/supabase';
 type User={id:string;full_name:string;role:string};
 type Zone={id:string;name:string;seller_id:string|null};
 type Route={id:string;seller_id:string;weekday:number;zone_id:string};
